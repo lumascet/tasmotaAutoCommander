@@ -6,14 +6,13 @@ import uuid
 import requests
 import ipaddress
 import json
-
+import os
 
 def get_network_manager():
     bus = dbus.SystemBus()
     proxy = bus.get_object("org.freedesktop.NetworkManager",
                            "/org/freedesktop/NetworkManager")
     return dbus.Interface(proxy, "org.freedesktop.NetworkManager")
-
 
 def get_active_wifi_device():
     nm = get_network_manager()
@@ -35,6 +34,7 @@ def scan_wifi_networks(device_proxy):
         device_proxy, "org.freedesktop.NetworkManager.Device.Wireless")
     wireless_interface.RequestScan({})
 
+    print("Scanning Wi-Fi networks...")
     time.sleep(5)  # Wait for the scan to complete
 
     aps = wireless_interface.GetAccessPoints()
@@ -109,7 +109,8 @@ def connect_to_wifi(device_proxy, wifi):
                 break
             time.sleep(1)
             loop += 1
-            if loop > 10:
+            print(".", end="", flush=True)
+            if loop > 60:
                 print(f"Failed to connect!")
                 return False
         print(f"Connected!")
@@ -118,6 +119,7 @@ def connect_to_wifi(device_proxy, wifi):
         print(f"Failed to connect: {e}")
         return False
 
+
 def disconnect_from_wifi(device_proxy):
     nm = get_network_manager()
 
@@ -125,20 +127,27 @@ def disconnect_from_wifi(device_proxy):
     active_connections = nm.GetDevices()
 
     for device in active_connections:
-        dev_proxy = dbus.SystemBus().get_object("org.freedesktop.NetworkManager", device)
-        dev_properties = dbus.Interface(dev_proxy, "org.freedesktop.DBus.Properties")
-        
+        dev_proxy = dbus.SystemBus().get_object(
+            "org.freedesktop.NetworkManager", device)
+        dev_properties = dbus.Interface(
+            dev_proxy, "org.freedesktop.DBus.Properties")
+
         # Check if the device is a Wi-Fi interface
-        device_type = dev_properties.Get("org.freedesktop.NetworkManager.Device", "DeviceType")
+        device_type = dev_properties.Get(
+            "org.freedesktop.NetworkManager.Device", "DeviceType")
         if device_type == 2:  # 2 indicates a Wi-Fi device
-            device_state = dev_properties.Get("org.freedesktop.NetworkManager.Device", "State")
+            device_state = dev_properties.Get(
+                "org.freedesktop.NetworkManager.Device", "State")
             if device_state == 100:  # 100 indicates the device is connected
-                active_connection = dev_properties.Get("org.freedesktop.NetworkManager.Device", "ActiveConnection")
-                
+                active_connection = dev_properties.Get(
+                    "org.freedesktop.NetworkManager.Device", "ActiveConnection")
+
                 if active_connection != "/":
-                    nm_proxy = dbus.SystemBus().get_object("org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager")
-                    nm_interface = dbus.Interface(nm_proxy, "org.freedesktop.NetworkManager")
-                    
+                    nm_proxy = dbus.SystemBus().get_object("org.freedesktop.NetworkManager",
+                                                           "/org/freedesktop/NetworkManager")
+                    nm_interface = dbus.Interface(
+                        nm_proxy, "org.freedesktop.NetworkManager")
+
                     # Deactivate the active connection
                     nm_interface.DeactivateConnection(active_connection)
                     print("Disconnected from Wi-Fi.")
@@ -226,17 +235,24 @@ def send_command_to_tasmota(ip, command):
     response = requests.get(url)
     return response
 
-
 if __name__ == "__main__":
+    # Check if the script is run with sudo
+    if os.geteuid() != 0:
+        print("This script must be run as root or with sudo.")
+        exit(1)
+
+    # Get the active Wi-Fi device
     device_path, device_proxy, device_properties = get_active_wifi_device()
     if not device_proxy:
         print("No Wi-Fi device found.")
         exit()
 
+    # Scan Wi-Fi networks and find Tasmota devices
     wifi_list = scan_wifi_networks(device_proxy)
     print(wifi_list)
     tasmota_list = getTasmotaHotspots(wifi_list)
 
+    # Connect to Tasmota hotspots and send commands
     for endpoint in tasmota_list.index:
         if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
             gateway_ip = get_wifi_router_ip()
@@ -244,6 +260,7 @@ if __name__ == "__main__":
             print(f"Gateway IP: {gateway_ip}")
             print(f"Local IP: {localhost_ip}")
 
+            #Send commands to Tasmota device
             command = f"Status 2"
             response = send_command_to_tasmota(gateway_ip, command)
             formatted_json = json.dumps(response.json(), indent=4)
@@ -254,4 +271,27 @@ if __name__ == "__main__":
             formatted_json = json.dumps(response.json(), indent=4)
             print(formatted_json)
 
-            disconnect_from_wifi(device_proxy)
+            command = f"Upgrade 1"
+            response = send_command_to_tasmota(gateway_ip, command)
+            formatted_json = json.dumps(response.json(), indent=4)
+            print(formatted_json)
+
+            print("Waiting for the device to reboot...")
+            time.sleep(30)
+            wifi_list = scan_wifi_networks(device_proxy)
+
+            if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
+                command = f"OtaUrl http://{localhost_ip}:5000/powsw10.bin"
+                response = send_command_to_tasmota(gateway_ip, command)
+                formatted_json = json.dumps(response.json(), indent=4)
+                print(formatted_json)
+
+                command = f"Upgrade 1"
+                response = send_command_to_tasmota(gateway_ip, command)
+                formatted_json = json.dumps(response.json(), indent=4)
+                print(formatted_json)
+
+                print("Waiting for the device to reboot...")
+                time.sleep(30)
+                # Disconnect from Wi-Fi
+                disconnect_from_wifi(device_proxy)
