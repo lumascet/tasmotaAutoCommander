@@ -1,0 +1,7 @@
+TASMOTA_HOTSPOT_PREFIX = "tasmota"
+ESPHOME_HOTSPOT_PREFIX = "esphome"
+BIN_FILE = "esphome.factory.bin"
+USERNAME = ""
+PASSWORD = ""
+TARGET_WIFI_SSID = ""
+TARGET_WIFI_PASSWORD = ""

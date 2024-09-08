@@ -8,7 +8,7 @@ import ipaddress
 import json
 import os
 
-BIN_FILE = "sp112-esp8266.factory.bin"
+from credentials import *
 
 def get_network_manager():
     bus = dbus.SystemBus()
@@ -73,8 +73,13 @@ def scan_wifi_networks(device_proxy):
 
 def getTasmotaHotspots(wifi_list):
     tasmota_list = wifi_list[wifi_list["SSID"].str.contains(
-        "tasmota", flags=re.IGNORECASE)]
+        TASMOTA_HOTSPOT_PREFIX, flags=re.IGNORECASE)]
     return tasmota_list
+
+def getEspHomeHotspots(wifi_list):
+    esphome_list = wifi_list[wifi_list["SSID"].str.contains(
+        ESPHOME_HOTSPOT_PREFIX, flags=re.IGNORECASE)]
+    return esphome_list
 
 
 def connect_to_wifi(device_proxy, wifi):
@@ -232,7 +237,7 @@ def get_local_wifi_ip():
 
 
 def send_command_to_tasmota(ip, command):
-    command_prefix = f"http://{ip}/cm?cmnd="
+    command_prefix = f"http://{ip}/cm?user={USERNAME}&password={PASSWORD}&cmnd="
     url = command_prefix + command
     response = requests.get(url)
     return response
@@ -249,40 +254,45 @@ if __name__ == "__main__":
         print("No Wi-Fi device found.")
         exit()
 
+    already_flashed_devices = []
+
     # Scan Wi-Fi networks and find Tasmota devices
-    wifi_list = scan_wifi_networks(device_proxy)
-    print(wifi_list)
-    tasmota_list = getTasmotaHotspots(wifi_list)
+    while True:
+        wifi_list = scan_wifi_networks(device_proxy)
+        print(wifi_list)
+        tasmota_list = getTasmotaHotspots(wifi_list)
+        esphome_list = getEspHomeHotspots(wifi_list)
 
-    # Connect to Tasmota hotspots and send commands
-    for endpoint in tasmota_list.index:
-        if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
-            gateway_ip = get_wifi_router_ip()
-            localhost_ip = get_local_wifi_ip()
-            print(f"Gateway IP: {gateway_ip}")
-            print(f"Local IP: {localhost_ip}")
+        for endpoint in esphome_list.index:
+            if connect_to_wifi(device_proxy, esphome_list.loc[endpoint]):
+                gateway_ip = get_wifi_router_ip()
+                localhost_ip = get_local_wifi_ip()
+                print(f"Gateway IP: {gateway_ip}")
+                print(f"Local IP: {localhost_ip}")
 
-            #Send commands to Tasmota device
-            command = f"Status 2"
-            response = send_command_to_tasmota(gateway_ip, command)
-            formatted_json = json.dumps(response.json(), indent=4)
-            print(formatted_json)
+                #Send commands to ESPHome device
+                response = requests.get(f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}")
+                print(response.text)
 
-            command = f"OtaUrl http://{localhost_ip}:5000/tasmota-minimal.bin.gz"
-            response = send_command_to_tasmota(gateway_ip, command)
-            formatted_json = json.dumps(response.json(), indent=4)
-            print(formatted_json)
 
-            command = f"Upgrade 1"
-            response = send_command_to_tasmota(gateway_ip, command)
-            formatted_json = json.dumps(response.json(), indent=4)
-            print(formatted_json)
 
-            print("Waiting for the device to reboot...")
-            time.sleep(30)
-
+        # Connect to Tasmota hotspots and send commands
+        for endpoint in tasmota_list.index:
+            if endpoint in already_flashed_devices:
+                continue
             if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
-                command = f"OtaUrl http://{localhost_ip}:5000/{BIN_FILE}"
+                gateway_ip = get_wifi_router_ip()
+                localhost_ip = get_local_wifi_ip()
+                print(f"Gateway IP: {gateway_ip}")
+                print(f"Local IP: {localhost_ip}")
+
+                #Send commands to Tasmota device
+                command = f"Status 2"
+                response = send_command_to_tasmota(gateway_ip, command)
+                formatted_json = json.dumps(response.json(), indent=4)
+                print(formatted_json)
+
+                command = f"OtaUrl http://{localhost_ip}:5000/tasmota-minimal.bin.gz"
                 response = send_command_to_tasmota(gateway_ip, command)
                 formatted_json = json.dumps(response.json(), indent=4)
                 print(formatted_json)
@@ -294,5 +304,20 @@ if __name__ == "__main__":
 
                 print("Waiting for the device to reboot...")
                 time.sleep(30)
-                # Disconnect from Wi-Fi
-                disconnect_from_wifi(device_proxy)
+
+                if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
+                    command = f"OtaUrl http://{localhost_ip}:5000/{BIN_FILE}"
+                    response = send_command_to_tasmota(gateway_ip, command)
+                    formatted_json = json.dumps(response.json(), indent=4)
+                    print(formatted_json)
+
+                    command = f"Upgrade 1"
+                    response = send_command_to_tasmota(gateway_ip, command)
+                    formatted_json = json.dumps(response.json(), indent=4)
+                    print(formatted_json)
+
+                    print("Waiting for the device to reboot...")
+                    time.sleep(30)
+                    # Disconnect from Wi-Fi
+                    disconnect_from_wifi(device_proxy)
+                    already_flashed_devices.append(endpoint)
