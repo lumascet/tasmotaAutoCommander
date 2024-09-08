@@ -8,6 +8,8 @@ import ipaddress
 import json
 import os
 
+BIN_FILE = "sp112-esp8266.factory.bin"
+
 def get_network_manager():
     bus = dbus.SystemBus()
     proxy = bus.get_object("org.freedesktop.NetworkManager",
@@ -278,10 +280,9 @@ if __name__ == "__main__":
 
             print("Waiting for the device to reboot...")
             time.sleep(30)
-            wifi_list = scan_wifi_networks(device_proxy)
 
             if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
-                command = f"OtaUrl http://{localhost_ip}:5000/powsw10.bin"
+                command = f"OtaUrl http://{localhost_ip}:5000/{BIN_FILE}"
                 response = send_command_to_tasmota(gateway_ip, command)
                 formatted_json = json.dumps(response.json(), indent=4)
                 print(formatted_json)
