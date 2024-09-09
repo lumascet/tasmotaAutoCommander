@@ -271,8 +271,9 @@ if __name__ == "__main__":
                 print(f"Local IP: {localhost_ip}")
 
                 #Send commands to ESPHome device
-                response = requests.get(f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}, timeout=10")
+                response = requests.get(f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}", timeout=10)
                 print(response.text)
+                time.sleep(10)
 
         # Connect to Tasmota hotspots and send commands
         for endpoint in tasmota_list.index:
