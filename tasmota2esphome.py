@@ -10,11 +10,13 @@ import os
 
 from credentials import *
 
+
 def get_network_manager():
     bus = dbus.SystemBus()
     proxy = bus.get_object("org.freedesktop.NetworkManager",
                            "/org/freedesktop/NetworkManager")
     return dbus.Interface(proxy, "org.freedesktop.NetworkManager")
+
 
 def get_active_wifi_device():
     nm = get_network_manager()
@@ -76,6 +78,7 @@ def getTasmotaHotspots(wifi_list):
         TASMOTA_HOTSPOT_PREFIX, flags=re.IGNORECASE)]
     return tasmota_list
 
+
 def getEspHomeHotspots(wifi_list):
     esphome_list = wifi_list[wifi_list["SSID"].str.contains(
         ESPHOME_HOTSPOT_PREFIX, flags=re.IGNORECASE)]
@@ -86,7 +89,7 @@ def connect_to_wifi(device_proxy, wifi):
     nm = get_network_manager()
 
     # Create the connection settings dictionary
-    connection_settings = {
+    connection_settings = dbus.Dictionary({
         "connection": {
             "id": f"{wifi['SSID']}_connection",
             "type": "802-11-wireless",
@@ -95,12 +98,13 @@ def connect_to_wifi(device_proxy, wifi):
         },
         "802-11-wireless": {
             "ssid": dbus.ByteArray(wifi['SSID'].encode('utf8')),
+            "bssid":  dbus.ByteArray(bytes.fromhex(wifi.name.replace(":", ""))),
             "mode": "infrastructure",
             "security": "none",
         },
         "ipv4": {"method": "auto"},
         "ipv6": {"method": "ignore"},
-    }
+    })
 
     # Add and activate the connection
     try:
@@ -108,7 +112,7 @@ def connect_to_wifi(device_proxy, wifi):
         dev_properties = dbus.Interface(
             device_proxy, "org.freedesktop.DBus.Properties")
         loop = 0
-        print(f"Connecting to {wifi['SSID']}...")
+        print(f"Connecting to {wifi['SSID']}[{wifi.name}]...")
         while True:
             state = dev_properties.Get(
                 "org.freedesktop.NetworkManager.Device", "State")
@@ -242,6 +246,7 @@ def send_command_to_tasmota(ip, command):
     response = requests.get(url)
     return response
 
+
 if __name__ == "__main__":
     # Check if the script is run with sudo
     if os.geteuid() != 0:
@@ -254,7 +259,8 @@ if __name__ == "__main__":
         print("No Wi-Fi device found.")
         exit()
 
-    already_flashed_devices = []
+    flashed_device_list = []
+    configured_device_list = []
 
     # Scan Wi-Fi networks and find Tasmota devices
     while True:
@@ -264,20 +270,24 @@ if __name__ == "__main__":
         esphome_list = getEspHomeHotspots(wifi_list)
 
         for endpoint in esphome_list.index:
+            if endpoint in configured_device_list:
+                continue
             if connect_to_wifi(device_proxy, esphome_list.loc[endpoint]):
                 gateway_ip = get_wifi_router_ip()
                 localhost_ip = get_local_wifi_ip()
                 print(f"Gateway IP: {gateway_ip}")
                 print(f"Local IP: {localhost_ip}")
 
-                #Send commands to ESPHome device
-                response = requests.get(f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}", timeout=10)
+                # Send commands to ESPHome device
+                response = requests.get(
+                    f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}", timeout=10)
                 print(response.text)
-                time.sleep(10)
+                configured_device_list.append(endpoint)
+                disconnect_from_wifi(device_proxy)
 
         # Connect to Tasmota hotspots and send commands
         for endpoint in tasmota_list.index:
-            if endpoint in already_flashed_devices:
+            if endpoint in flashed_device_list:
                 continue
             if connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
                 gateway_ip = get_wifi_router_ip()
@@ -285,7 +295,7 @@ if __name__ == "__main__":
                 print(f"Gateway IP: {gateway_ip}")
                 print(f"Local IP: {localhost_ip}")
 
-                #Send commands to Tasmota device
+                # Send commands to Tasmota device
                 command = f"Status 2"
                 response = send_command_to_tasmota(gateway_ip, command)
                 formatted_json = json.dumps(response.json(), indent=4)
@@ -326,4 +336,4 @@ if __name__ == "__main__":
                 time.sleep(30)
                 # Disconnect from Wi-Fi
                 disconnect_from_wifi(device_proxy)
-                already_flashed_devices.append(endpoint)
+                flashed_device_list.append(endpoint)
