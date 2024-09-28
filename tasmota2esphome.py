@@ -9,6 +9,7 @@ import json
 import os
 
 from credentials import *
+from rich.progress import Progress
 
 
 def get_network_manager():
@@ -38,8 +39,11 @@ def scan_wifi_networks(device_proxy):
         device_proxy, "org.freedesktop.NetworkManager.Device.Wireless")
     wireless_interface.RequestScan({})
 
-    print("Scanning Wi-Fi networks...")
-    time.sleep(5)  # Wait for the scan to complete
+    with Progress() as progress:
+        task = progress.add_task("[cyan]Scanning Wi-Fi networks", total=100)
+        for _ in range(100):
+            time.sleep(0.05)
+            progress.update(task, advance=1)
 
     aps = wireless_interface.GetAccessPoints()
 
@@ -112,18 +116,20 @@ def connect_to_wifi(device_proxy, wifi):
         dev_properties = dbus.Interface(
             device_proxy, "org.freedesktop.DBus.Properties")
         loop = 0
-        print(f"Connecting to {wifi['SSID']}[{wifi.name}]...")
-        while True:
-            state = dev_properties.Get(
-                "org.freedesktop.NetworkManager.Device", "State")
-            if state == 100:
-                break
-            time.sleep(1)
-            loop += 1
-            print(".", end="", flush=True)
-            if loop > 60:
-                print(f"Failed to connect!")
-                return False
+        with Progress() as progress:
+            task = progress.add_task(
+                f"[cyan]Connecting to {wifi['SSID']}[{wifi.name}]", total=60)
+            while True:
+                state = dev_properties.Get(
+                    "org.freedesktop.NetworkManager.Device", "State")
+                if state == 100:
+                    break
+                time.sleep(1)
+                loop += 1
+                progress.update(task, advance=1)
+                if loop > 60:
+                    print(f"Failed to connect!")
+                    return False
         print(f"Connected!")
         return True
     except dbus.DBusException as e:
@@ -279,11 +285,15 @@ if __name__ == "__main__":
                 print(f"Local IP: {localhost_ip}")
 
                 # Send commands to ESPHome device
-                response = requests.get(
-                    f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}", timeout=10)
-                print(response.text)
-                configured_device_list.append(endpoint)
-                disconnect_from_wifi(device_proxy)
+                try:
+                    response = requests.get(
+                        f"http://192.168.4.1/wifisave?ssid={TARGET_WIFI_SSID}&psk={TARGET_WIFI_PASSWORD}", timeout=10)
+                    print(response.text)
+                    configured_device_list.append(endpoint)
+                    disconnect_from_wifi(device_proxy)
+                except Exception as e:
+                    print(f"Failed to configure ESPHome device: {e}")
+                    break
 
         # Connect to Tasmota hotspots and send commands
         for endpoint in tasmota_list.index:
@@ -302,7 +312,7 @@ if __name__ == "__main__":
                 if "WARNING" in response.json():
                     print(response.json()["WARNING"])
                     break
-                if "Command" in response.json() and response.json()["Command"] != "Unknown":
+                if "Command" in response.json() and response.json()["Command"] == "Unknown":
                     print("Skipping minimal install as it is already installed.")
                 else:
                     print(formatted_json)
@@ -316,8 +326,12 @@ if __name__ == "__main__":
                     formatted_json = json.dumps(response.json(), indent=4)
                     print(formatted_json)
 
-                    print("Waiting for the device to reboot...")
-                    time.sleep(30)
+                    with Progress() as progress:
+                        task = progress.add_task(
+                            "[cyan]Waiting for the device to reboot", total=60)
+                        while not progress.finished:
+                            time.sleep(1)
+                            progress.update(task, advance=1)
 
                     if not connect_to_wifi(device_proxy, tasmota_list.loc[endpoint]):
                         break
@@ -332,8 +346,12 @@ if __name__ == "__main__":
                 formatted_json = json.dumps(response.json(), indent=4)
                 print(formatted_json)
 
-                print("Waiting for the device to reboot...")
-                time.sleep(30)
+                with Progress() as progress:
+                    task = progress.add_task(
+                        "[cyan]Waiting for the device to reboot", total=30)
+                    while not progress.finished:
+                        time.sleep(1)
+                        progress.update(task, advance=1)
                 # Disconnect from Wi-Fi
                 disconnect_from_wifi(device_proxy)
                 flashed_device_list.append(endpoint)
